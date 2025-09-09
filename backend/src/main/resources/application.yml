@@ -1,0 +1,66 @@
+spring:
+  application:
+    name: springboot-jpa
+
+  config:
+    import: optional:file:.env
+
+  jpa:
+    database-platform: org.hibernate.dialect.H2Dialect
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        highlight_sql: true
+        use_sql_comments: true
+        default_batch_fetch_size: 50
+
+  datasource:
+    url: jdbc:h2:./db_dev;MODE=MySQL;DATABASE_TO_UPPER=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  jackson:
+    serialization:
+      fail-on-empty-beans: false
+
+  cache:
+    type: simple  # 개발/테스트용 - 메모리 캐시
+    # type: redis  # 운영용
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 2000ms
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: ""
+      timeout: 6000ms
+
+springdoc:
+  default-produces-media-type: application/json;charset=UTF-8
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+  override-with-generic-response: false
+
+logging:
+  level:
+    com.back: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.orm.jdbc.bind: TRACE
+    org.hibernate.orm.jdbc.extract: TRACE
+    org.springframework.transaction.interceptor: TRACE
