@@ -1,3 +1,7 @@
+server:
+  forward-headers-strategy: native
+  shutdown: graceful
+
 spring:
   application:
     name: springboot-jpa
@@ -17,6 +21,11 @@ spring:
         highlight_sql: true
         use_sql_comments: true
         default_batch_fetch_size: 50
+        # ── 추가: 쓰기 성능 향상 옵션
+        order_inserts: true
+        order_updates: true
+        jdbc:
+          batch_size: 50
 
   datasource:
     url: jdbc:h2:./db_dev;MODE=MySQL;DATABASE_TO_UPPER=FALSE
@@ -30,8 +39,15 @@ spring:
       path: /h2-console
 
   jackson:
+    time-zone: Asia/Seoul
     serialization:
       fail-on-empty-beans: false
+      write-dates-as-timestamps: false
+
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
 
   cache:
     type: simple  # 개발/테스트용 - 메모리 캐시
@@ -56,6 +72,18 @@ springdoc:
     enabled: true
     path: /swagger-ui.html
   override-with-generic-response: false
+
+management:
+  endpoints:
+    web:
+      base-path: /actuator
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
 
 logging:
   level:
