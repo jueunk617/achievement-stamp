@@ -1,0 +1,45 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [ main, feature/** ]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      # gradle wrapper가 있으면 테스트 실행
+      - name: Run Gradle tests (if wrapper exists)
+        if: hashFiles('backend/gradlew') != ''
+        working-directory: backend
+        run: |
+          chmod +x ./gradlew
+          ./gradlew test --no-daemon
+
+      # wrapper가 없으면 (초기 단게) 스킵
+      - name: Skip (no gradle wrapper yet)
+        if: hashFiles('backend/gradlew') == ''
+        run: |
+          echo "No gradle wrapper found in backend/. Skipping build & tests."
+
+      # 테스트 리포트 업로드 (있을 때만)
+      - name: Upload test report
+        if: always() && hashFiles('backend/build/reports/tests/test/index.html') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-junit-report
+          path: backend/build/reports/tests/test
