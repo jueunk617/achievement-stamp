@@ -2,7 +2,7 @@ name: frontend-ci
 
 on:
   push:
-    branches: [ main, feature/** ]
+    branches: [ main, feat/** ]
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-ci.yml"
@@ -11,16 +11,18 @@ permissions:
   contents: read
 
 jobs:
-  install-lint-test-build:
+  ci:
     runs-on: ubuntu-latest
-    if: hashFiles('frontend/package.json') != ''
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
+      # 프론트엔드가 없는 경우 스킵
+      - name: No frontend, skipping
+        if: ${{ hashFiles('frontend/package.json') == '' }}
+        run: echo "No frontend/package.json found. Skipping frontend CI."
+
       - name: Use Node.js 20
+        if: ${{ hashFiles('frontend/package.json') != '' }}
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -28,19 +30,28 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install deps
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
         run: npm ci
 
       - name: Lint (optional)
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
         run: npm run lint --if-present
 
       - name: Unit test (optional)
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
         run: npm test --if-present -- --ci
 
       - name: Build
+        if: ${{ hashFiles('frontend/package.json') != '' }}
+        working-directory: frontend
         run: npm run build
 
-  skip-frontend:
-    runs-on: ubuntu-latest
-    if: hashFiles('frontend/package.json') == ''
-    steps:
-      - run: echo "No frontend/package.json. Skipping frontend CI."
+      - name: Upload build (optional)
+        if: ${{ hashFiles('frontend/package.json') != '' && success() && hashFiles('frontend/dist/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/dist
