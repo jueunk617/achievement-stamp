@@ -12,6 +12,8 @@ terraform {
 # ------------------------
 provider "aws" {
   region = var.region
+  # 필요시 프로필 지정:
+  # profile = "terra-admin"
 }
 
 # ------------------------
@@ -76,17 +78,14 @@ resource "aws_route_table_association" "association_1" {
   subnet_id      = aws_subnet.subnet_1.id
   route_table_id = aws_route_table.rt_1.id
 }
-
 resource "aws_route_table_association" "association_2" {
   subnet_id      = aws_subnet.subnet_2.id
   route_table_id = aws_route_table.rt_1.id
 }
-
 resource "aws_route_table_association" "association_3" {
   subnet_id      = aws_subnet.subnet_3.id
   route_table_id = aws_route_table.rt_1.id
 }
-
 resource "aws_route_table_association" "association_4" {
   subnet_id      = aws_subnet.subnet_4.id
   route_table_id = aws_route_table.rt_1.id
@@ -115,7 +114,7 @@ resource "aws_security_group" "sg_1" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Nginx Proxy Manager admin 
+  # Nginx Proxy Manager admin (초기엔 전체, 운영 전 내 IP/32로 제한 권장)
   ingress {
     from_port   = 81
     to_port     = 81
@@ -123,7 +122,7 @@ resource "aws_security_group" "sg_1" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # SSH 
+  # SSH (초기엔 전체, 운영 전 내 IP/32로 제한 권장)
   ingress {
     from_port   = 22
     to_port     = 22
@@ -178,13 +177,14 @@ resource "aws_iam_instance_profile" "instance_profile_1" {
 }
 
 # ------------------------
-# User Data Script (Ubuntu 22.04 + Docker 공식 리포)
+# User Data Script (Amazon Linux 2023 + dnf)
 # ------------------------
 locals {
   ec2_user_data_base = <<-END_OF_FILE
 #!/bin/bash
 set -eux
 
+# ===== System prep =====
 # swap 4GB
 dd if=/dev/zero of=/swapfile bs=128M count=32
 chmod 600 /swapfile
@@ -193,7 +193,7 @@ swapon /swapfile
 echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
 
 # timezone
-timedatectl set-timezone Asia/Seoul
+timedatectl set-timezone Asia/Seoul || true
 
 # env
 echo "PASSWORD_1=${var.password_1}"                            >> /etc/environment
@@ -203,25 +203,27 @@ echo "GITHUB_ACCESS_TOKEN_1_OWNER=${var.github_access_token_1_owner}" >> /etc/en
 echo "GITHUB_ACCESS_TOKEN_1=${var.github_access_token_1}"              >> /etc/environment
 source /etc/environment
 
-# Docker (Ubuntu - official repo)
-apt-get update -y
-apt-get install -y ca-certificates curl gnupg
+# ===== Packages (AL2023 uses dnf) =====
+dnf -y update
+dnf -y install ca-certificates curl git
 
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-$(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
-
-apt-get update -y
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# Docker (AL2023 repo)
+if ! command -v docker >/dev/null 2>&1; then
+  dnf -y install docker
+fi
 systemctl enable docker
 systemctl start docker
 
-# docker network
+# (만약 위가 실패하면 아래 대안 사용)
+# dnf -y install dnf-plugins-core
+# dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+# dnf -y install docker-ce docker-ce-cli containerd.io
+# systemctl enable docker && systemctl start docker
+
+# ===== Docker network =====
 docker network create common || true
 
-# Nginx Proxy Manager
+# ===== Nginx Proxy Manager =====
 docker run -d --name npm_1 --restart unless-stopped --network common \
   -p 80:80 -p 443:443 -p 81:81 \
   -e TZ=Asia/Seoul \
@@ -231,13 +233,13 @@ docker run -d --name npm_1 --restart unless-stopped --network common \
   -v /dockerProjects/npm_1/volumes/etc/letsencrypt:/etc/letsencrypt \
   jc21/nginx-proxy-manager:latest
 
-# Redis
+# ===== Redis =====
 docker run -d --name redis_1 --restart unless-stopped --network common \
   -p 6379:6379 -e TZ=Asia/Seoul \
   -v /dockerProjects/redis_1/volumes/data:/data \
   redis:7-alpine --requirepass ${var.password_1}
 
-# MySQL 8
+# ===== MySQL 8 =====
 docker run -d --name mysql_1 --restart unless-stopped \
   -v /dockerProjects/mysql_1/volumes/var/lib/mysql:/var/lib/mysql \
   -v /dockerProjects/mysql_1/volumes/etc/mysql/conf.d:/etc/mysql/conf.d \
@@ -268,15 +270,30 @@ END_OF_FILE
 }
 
 # ------------------------
-# AMI (Ubuntu 22.04 LTS x86_64)
+# AMI (Amazon Linux 2023 x86_64)
 # ------------------------
-data "aws_ami" "ubuntu_2204" {
+data "aws_ami" "latest_amazon_linux" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical
+  owners      = ["amazon"]
 
   filter {
     name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+    values = ["al2023-ami-2023.*-x86_64"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["x86_64"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+
+  filter {
+    name   = "root-device-type"
+    values = ["ebs"]
   }
 }
 
@@ -284,7 +301,7 @@ data "aws_ami" "ubuntu_2204" {
 # EC2 + Elastic IP
 # ------------------------
 resource "aws_instance" "ec2_1" {
-  ami                         = data.aws_ami.ubuntu_2204.id
+  ami                         = data.aws_ami.latest_amazon_linux.id
   instance_type               = "t3.micro"
   subnet_id                   = aws_subnet.subnet_2.id
   vpc_security_group_ids      = [aws_security_group.sg_1.id]
