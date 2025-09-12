@@ -4,11 +4,11 @@ name: deploy
 # 전역 환경변수
 # =========================
 env:
-  IMAGE_REPOSITORY: achievement-stamp         # GHCR 이미지 리포지토리명(소유자 제외)
-  CONTAINER_1_NAME: achievement-stamp_1       # 슬롯1(고정 이름)
-  CONTAINER_2_NAME: achievement-stamp_2       # 슬롯2(고정 이름)
-  CONTAINER_PORT: 8080                        # 컨테이너 내부 포트(스프링부트)
-  EC2_INSTANCE_TAG_NAME: terra-ec2-1          # EC2 Name 태그(네가 올린 값)
+  IMAGE_REPOSITORY: achievement-stamp         # GHCR 이미지 리포지토리명
+  CONTAINER_1_NAME: achievement-stamp_1       # 슬롯1
+  CONTAINER_2_NAME: achievement-stamp_2       # 슬롯2
+  CONTAINER_PORT: 8080                        # 컨테이너 내부 포트
+  EC2_INSTANCE_TAG_NAME: terra-ec2-1          # EC2 Name 태그
   DOCKER_NETWORK: common                      # 도커 네트워크
   BACKEND_DIR: backend                        # Dockerfile 위치
 
@@ -139,6 +139,19 @@ jobs:
 
       - name: AWS SSM Send-Command
         uses: peterkimzz/aws-ssm-send-command@master
+        env:
+          # Secrets 및 컨텍스트를 ENV로 올림
+          APP_DOMAIN: ${{ secrets.APP_DOMAIN }}
+          NPM_ADMIN_PASSWORD: ${{ secrets.NPM_ADMIN_PASSWORD }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          OWNER_LC: ${{ github.repository_owner }}
+          IMAGE_REPOSITORY: ${{ env.IMAGE_REPOSITORY }}
+          IMAGE_TAG: ${{ needs.makeTagAndRelease.outputs.tag_name }}
+          CONTAINER_1_NAME: ${{ env.CONTAINER_1_NAME }}
+          CONTAINER_2_NAME: ${{ env.CONTAINER_2_NAME }}
+          CONTAINER_PORT: ${{ env.CONTAINER_PORT }}
+          DOCKER_NETWORK: ${{ env.DOCKER_NETWORK }}
+          DOT_ENV: ${{ secrets.DOT_ENV }}
         with:
           aws-region: ${{ secrets.AWS_REGION }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -155,32 +168,26 @@ jobs:
 
             command -v jq >/dev/null 2>&1 || (dnf -y install jq || yum -y install jq || true)
 
-            # ====== 필수 변수 세팅 (GitHub Secrets 사용) ======
-            export PASSWORD_1='${{ secrets.NPM_ADMIN_PASSWORD }}'   # NPM 관리자 비번
-            export APP_1_DOMAIN='${{ secrets.APP_DOMAIN }}'          # 예: api.stamppop.shop
+            # ====== 필수 변수 세팅 (ENV에서 읽기) ======
+            export PASSWORD_1="${NPM_ADMIN_PASSWORD}"   # NPM 관리자 비번
+            export APP_1_DOMAIN="${APP_DOMAIN}"         # 예: api.stamppop.shop
 
-            OWNER_LC='${{ github.repository_owner }}'
             OWNER_LC="${OWNER_LC,,}"
-            IMAGE_REPOSITORY='${{ env.IMAGE_REPOSITORY }}'
-            IMAGE_TAG='${{ needs.makeTagAndRelease.outputs.tag_name }}'
             IMAGE="ghcr.io/${OWNER_LC}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
-            SLOT1='${{ env.CONTAINER_1_NAME }}'
-            SLOT2='${{ env.CONTAINER_2_NAME }}'
-            PORT_IN='${{ env.CONTAINER_PORT }}'
-            NET='${{ env.DOCKER_NETWORK }}'
+            SLOT1="${CONTAINER_1_NAME}"
+            SLOT2="${CONTAINER_2_NAME}"
+            PORT_IN="${CONTAINER_PORT}"
+            NET="${DOCKER_NETWORK}"
 
             echo "🔹 Use image: ${IMAGE}"
-            # (프라이빗이면) GHCR 로그인
-            if [ -n "${{ secrets.GHCR_PAT }}" ] && [ "${{ secrets.GHCR_PAT }}" != "null" ]; then
-              echo '${{ secrets.GHCR_PAT }}' | docker login ghcr.io -u "${OWNER_LC}" --password-stdin
+            if [ -n "${GHCR_PAT:-}" ] && [ "${GHCR_PAT}" != "null" ]; then
+              echo "${GHCR_PAT}" | docker login ghcr.io -u "${OWNER_LC}" --password-stdin
             fi
             docker pull "${IMAGE}"
 
             # 런타임 환경파일 저장 (DOT_ENV)
             install -d -m 700 /opt/app/env
-            cat > /opt/app/env/backend.env <<'ENVEOF'
-${{ secrets.DOT_ENV }}
-ENVEOF
+            printf "%s" "${DOT_ENV}" > /opt/app/env/backend.env
             chmod 600 /opt/app/env/backend.env
 
             # NPM 토큰 발급
