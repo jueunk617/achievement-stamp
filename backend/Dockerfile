@@ -23,7 +23,7 @@ RUN gradle build --no-daemon
 # =========================================================
 # 두 번째 스테이지: 실행 스테이지
 # =========================================================
-FROM container-registry.oracle.com/graalvm/jdk:21
+FROM ghcr.io/graalvm/jdk:21
 
 # 작업 디렉토리 설정
 WORKDIR /app
