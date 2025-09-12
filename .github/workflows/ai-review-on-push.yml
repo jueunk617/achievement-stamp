@@ -3,10 +3,12 @@ name: ai-review-on-push
 on:
   push:
     branches: [ main, feat/** ]
-    paths: [ "backend/**", "frontend/**" ]
+    paths:
+      - "backend/**"
+      - "frontend/**"
 
 permissions:
-  contents: write  # 커밋 코멘트 작성 권한
+  contents: write   
   actions: read
 
 jobs:
@@ -22,17 +24,28 @@ jobs:
         id: diff
         shell: bash
         run: |
+          set -euo pipefail
           BEFORE="${{ github.event.before }}"
           AFTER="${{ github.sha }}"
-          # 안전하게 필요한 범위만 페치
-          git fetch --no-tags --prune --depth=2 origin "${{ github.ref_name }}" || true
+          BRANCH="${{ github.ref_name }}"
+
+          # 필요한 범위만 가볍게 페치
+          git fetch --no-tags --prune --depth=2 origin "${BRANCH}" || true
+
+          # 브랜치 최초 푸시인 경우(before=000... 이거나 비어있음) 대비
+          if [[ -z "${BEFORE}" || "${BEFORE}" == "0000000000000000000000000000000000000000" ]]; then
+            # 리포지토리의 최초 커밋(루트 커밋)과 비교
+            BEFORE=$(git rev-list --max-parents=0 "${AFTER}" | tail -n1)
+          fi
 
           # 범위 diff (여러 커밋이 한 번에 push 되어도 커버)
-          git diff --unified=0 "$BEFORE" "$AFTER" > diff.patch || true
+          git diff --unified=0 "${BEFORE}" "${AFTER}" > diff.patch || true
 
           # 너무 길면 자르기 (토큰 과다 방지)
-          head -c 18000 diff.patch > diff.trunc.patch
-          echo "bytes=$(wc -c < diff.trunc.patch)" >> $GITHUB_OUTPUT
+          head -c 18000 diff.patch > diff.trunc.patch || true
+
+          BYTES=$(wc -c < diff.trunc.patch | tr -d ' ')
+          echo "bytes=${BYTES}" >> "$GITHUB_OUTPUT"
 
       - name: Skip if no diff
         if: steps.diff.outputs.bytes == '0'
@@ -42,6 +55,7 @@ jobs:
         if: steps.diff.outputs.bytes != '0'
         shell: bash
         run: |
+          set -euo pipefail
           cat > system.txt <<'SYS'
           You are a senior software reviewer.
           Return a terse, actionable review of the provided git diff.
@@ -51,27 +65,14 @@ jobs:
           - If diff only contains scaffolding or trivial changes, say so briefly.
           SYS
 
-          # 디프 내용을 JSON-safe 문자열로
-          jq -Rs . < diff.trunc.patch > diff.json
+          # 줄바꿈/따옴표 보존하여 JSON-safe 문자열 생성
+          SYS_JSON=$(jq -Rs . < system.txt)
+          DIFF_JSON=$(jq -Rs . < diff.trunc.patch)
 
-          # Responses API payload 생성 (OpenAI)
-          cat > payload.json <<'JSON'
-          {
-            "model": "gpt-4o-mini",
-            "input": [
-              { "role": "system", "content": __SYSTEM__ },
-              { "role": "user",   "content": __DIFF__ }
-            ]
-          }
-          JSON
-
-          SYSTEM_ESCAPED=$(jq -Rs . < system.txt)
-          DIFF_ESCAPED=$(cat diff.json)
-
-          # placeholder 치환
-          jq -n --argjson sys "$SYSTEM_ESCAPED" --argjson dif "$DIFF_ESCAPED" '
-            (input | .input[0].content = $sys | .input[1].content = $dif)
-          ' payload.json > payload.final.json
+          # 최종 payload를 jq -n으로 직접 구성
+          jq -n --argjson sys "$SYS_JSON" --argjson dif "$DIFF_JSON" \
+            '{"model":"gpt-4o-mini","input":[{"role":"system","content":$sys},{"role":"user","content":$dif}]}' \
+            > payload.final.json
 
       - name: Call OpenAI Responses API
         if: steps.diff.outputs.bytes != '0'
@@ -79,18 +80,18 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         shell: bash
         run: |
-          if [ -z "$OPENAI_API_KEY" ]; then
+          set -euo pipefail
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
             echo "OPENAI_API_KEY secret is missing"; exit 1
           fi
 
-          # Responses API 호출
           curl -sS https://api.openai.com/v1/responses \
-            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Authorization: Bearer ${OPENAI_API_KEY}" \
             -H "Content-Type: application/json" \
             -d @payload.final.json \
             | tee openai.json >/dev/null
 
-          # 결과 텍스트 추출 (output_text가 없으면 실패 처리)
+          # output_text 추출 (없으면 실패 처리)
           jq -r '.output_text // empty' openai.json > review.md
           if [ ! -s review.md ]; then
             echo "No output_text in response:"; cat openai.json; exit 1
