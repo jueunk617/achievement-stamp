@@ -8,7 +8,7 @@ on:
       - "frontend/**"
 
 permissions:
-  contents: write   
+  contents: write
   actions: read
 
 jobs:
@@ -91,8 +91,8 @@ jobs:
             -d @payload.final.json \
             | tee openai.json >/dev/null
 
-          # output_text 추출 (없으면 실패 처리)
-          jq -r '.output_text // empty' openai.json > review.md
+          # output[0].content[0].text 추출 (없으면 실패 처리)
+          jq -r '.output[0].content[0].text // empty' openai.json > review.md
           if [ ! -s review.md ]; then
             echo "No output_text in response:"; cat openai.json; exit 1
           fi
